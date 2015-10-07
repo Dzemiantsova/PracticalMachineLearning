@@ -1,14 +1,19 @@
 ---
-title: "Results"
-author: "Dzemiantsova"
+title: "Coursera Practical Machine Learning Project"
+author: "Liudmila Dzemiantsova"
 date: "September 11, 2015"
 output: html_document
 ---
-Libraries:
+**Summary** 
+
+This project compare several machine learning algorithms to predict exercise quality based on the activity data monitored by accelerometers (http://groupware.les.inf.puc-rio.br/har). Results obtained by Support Vector Machines (SVM), K-Nearest-Neighbor (KNN) and Random Forest (RF) are compared. Based on out-of-sample errors and the errors with cross-validation, RF provides the best prediction accuracy, with an out-of-sample error < 0.05%, and a cross-validation error < 0.1%. Results based on 20 testing samples show that the prediction model built based on RF correctly predicts the activity quality of all these samples.
+
+**Libraries**
 ```{r, echo=FALSE}
 library(gam)
 library(caret)
 library(kernlab)
+library(randomForest)
 library(doParallel)
 
 checkColumn <- function(data.1, data.2){
@@ -29,8 +34,8 @@ checkColumn <- function(data.1, data.2){
    index  
 }
 ```
+**Read and clean the data**
 
-I save the training and the testing data in the training and the testing data frame, respectively, and check their structure and dimension.
 ```{r}
 training <-  read.csv("pml-training.csv", na.strings=c("NA",""))
 testing <-  read.csv("pml-testing.csv", na.strings=c("NA",""))
@@ -40,12 +45,12 @@ dim(training)
 dim(testing)
 ```
 
-First, I explore the training data. There are missing values NA which I replace with the mean of the non-missings in case of continuous variables, and add a new level "NA" in case of factors.
+First, the training data are explored. There are missing values NA which I replace with the mean of the non-missings in case of continuous variables, and add a new level "NA" in case of factors.
 ```{r}
 training <- na.gam.replace(training)
 ```
 
-With the research article given by Coursera, I check the description of each predictor in the data. I find that the first five predictors such as index, timestamp and username, are not important. Therefore, I consider only the rest predictors which I sort alphabetically:
+I eliminate predictors such as index, timestamp and username, which are not important for the data, and sort the rest predictors alphabetically:
 ```{r}
 training <- training[,6:160]
 training <- training[,order(names(training))]
@@ -53,25 +58,22 @@ testing <- testing[,6:160]
 testing <- testing[,order(names(testing))]
 ```
 
-Interestingly, the number of predictors in the training is equal to those in the testing, though there is no 'classe' column in the testing. This means that there is a predictor in the testing that does not exist in the training. To find this predictor, I use a function 'checkColumn' written by myself, which returns indices of columns that are missing in one of two data sets.  
+Interestingly, the number of predictors in the training is equal to those in the testing, though there is no 'classe' column in the testing. This means that there is a predictor in the testing that does not exist in the training. To find this predictor, I use my own written function 'checkColumn' that returns indices of columns that are missing in one of two data sets.  
 
 ```{r}
 training.index <- checkColumn(training, testing)
 testing.index <- checkColumn(testing, training) 
 ```
 
-As a result, training.index returns an index of the 'classe' column in the training, whereas testing.index resturns an index of the 'problem_id' column in the testing.
-```{r}
-training.index
-testing.index
-```
+As a result, training.index returns an index of the 'classe' column in the training, whereas testing.index resturns an index of the 'problem_id' column in the testing. I save the 'classe' column in a new vector 'trainClass', and remove the 'classe' and the 'problem_id' column from the training and the testing data, respectively.
 
-I save the 'classe' column in a new vector 'trainClass', and remove the 'classe' and the 'problem_id' column from the training and the testing data, respectively.
 ```{r}
 trainClass <- training[, training.index]
 training <- training[, -training.index]
 testing <- testing[, -testing.index]
 ```
+
+**Pre-processing the data**
 
 Since both data sets have the same predictors, I can pre-process the data in the same way. I remove a near zero-variance predictors:
 ```{r}
@@ -94,33 +96,85 @@ xTrans <- preProcess(training)
 training <- predict(xTrans, training)
 testing <- predict(xTrans, testing)
 ```
+**Building models**
 
-In order to make classification predictions for the testing data, I need to build a model trained on the training data. First, I split the training data into two sets: in.sample and out.of.sample.
+The 40% of the data in the original training data set will be used to estimate out-of-sample. These samples will not be used for building prediction models, while the remaining 60% data (in-sample) in the original training data set will be used to build the machine learning models. 
 ```{r}
 inTrain <- createDataPartition(y = trainClass, p = 0.6, list = FALSE)
 in.sample <- training[inTrain,]
 out.of.sample <- training[-inTrain,]
 ```
 
-Next, I need to choose a supervised learning model. In case of a classification problem with a number of classes more than two, I use the random forest (rf). To avoid overfitting and make the most efficient use of the data, I train the model with the 5-fold cross-validation. 
+In case of a classification problem with a number of classes more than two, I use different supervised lerning methods: SVM, KNN and RF. To avoid overfitting and make the most efficient use of the data, I train the model with the 5-fold cross-validation. 
 ```{r, echo=FALSE}
 registerDoParallel(cores=2)
 ```
 
+SVM:
 ```{r}
 cvControl <- trainControl(method = "repeatedcv", repeats=5)
 set.seed(12345)
-rfFit <- train(in.sample, trainClass[inTrain], method = "rf", trControl = cvControl)
-print(rfFit$finalModel)
+if (file.exists("svmFit.rda")) {
+    load("svmFit.rda")
+  } else {
+    svmFit <- train(in.sample, trainClass[inTrain], method = "svmRadial", trControl = cvControl)
+    save(svmFit, file="svmFit.rda")
+    }
+print(svmFit$finalModel)
 ```
 
-The model shows good results, where the in-sample (training) error is less than 1 %. Since it is not equal to zero, there is no overfitting. To estimate the efficacy of the model, I check a confusion matrix for the out-of-sample data and calculate an out-of-sample error. 
+KNN:
 ```{r}
-predictions <- predict(rfFit$finalModel, newdata = out.of.sample)
-confusionMatrix(predictions, trainClass[-inTrain])
-outofsample.error <- mean(predictions != trainClass[-inTrain])
-paste("out-of-sample error: ",outofsample.error)
+knnGrid <- expand.grid(.k=c(2:5))
+set.seed(12345)
+if (file.exists("knnFit.rda")) {
+    load("knnFit.rda")
+  } else {
+    knnFit <- train(in.sample, trainClass[inTrain], method = "knn", trControl = cvControl, tuneGrid = knnGrid)
+    save(knnFit, file="knnFit.rda")
+    }
+print(knnFit$finalModel)
 ```
 
-As it is expected, the out-of-sample error is larger compared to the in-sample error. Since the out-of-sample error is still less than 1 %, the model can predict 'classe' for the testing data with the accuracy of almost 100 %.
+RF:
+```{r}
+set.seed(12345)
+if (file.exists("rfFit.rda")) {
+    load("rfFit.rda")
+  } else {
+    rfFit <- train(in.sample, trainClass[inTrain], method = "rf", trControl = cvControl)
+    save(rfFit, file="rfFit.rda")
+    }
+print(rfFit)
+```
+The results show that the RF model has a high CV accuracy corresponding to a low CV error.  
+
+**Compare the modes**
+
+I compare the models by errors of CV and out-of-sample errors.
+```{r}
+set.seed(1)
+predictions.svm <- predict(svmFit, newdata = out.of.sample)
+set.seed(1)
+predictions.knn <- predict(knnFit$finalModel, newdata = out.of.sample)
+set.seed(1)
+predictions.rf <- predict(rfFit, newdata = out.of.sample)
+```
+
+```{r}
+svm.model <- data.frame(model = "svm", "error"=mean(predictions.svm != trainClass[-inTrain]))
+knn.model <- data.frame(model = "knn", "error"=mean(predictions.knn != trainClass[-inTrain]))
+rf.model <- data.frame(model = "rf", "error"=mean(predictions.rf != trainClass[-inTrain]))
+all.model <- rbind(svm.model, knn.model, rf.model)
+all.model
+```
+
+The SVM and RF models show best results, where the in-sample (training) errors are less than 1 %. Since out-of-sample errors of all models are comparable with corresponding in-sample errors, there are no overfitting. Results show that RF model provides a high accuracy corresponding to a much lower out-of-sample error (<0.05%), and therefore is used for predicting the testing data set. Classifications for all the 20 test samples are correctly predicted. 
+```{r}
+set.seed(1)
+predict(rfFit, newdata = testing)
+```
+
+
+
 
